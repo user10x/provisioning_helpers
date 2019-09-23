@@ -7,4 +7,4 @@ docker build -t aws-cli:1.0 .
 docker run aws-cli:1.0 s3 ls
 
 # or override env variables; aws-cli:1.0 s3 ls runs
-docker run  -e AWS_ACCESS_KEY_ID=<input-your-key> -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION aws-cli s3 ls
+docker run  -e AWS_ACCESS_KEY_ID=<input-your-key> -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION aws-cli:1.0 s3 ls
