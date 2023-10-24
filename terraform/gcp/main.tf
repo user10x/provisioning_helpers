@@ -2,19 +2,34 @@
 variable "project_id" {
   type        = string
   description = "The project name to use."
-  default = "PROJECT_ID"
+  default = "project_id"
 }
 
 variable "project_number" {
   type        = string
   description = "The project number to use."
-  default = "PROJECT_NUMBER"
+  default = "bc-nonprod-roc-1a1c"
+}
+
+
+resource "google_service_account" "sa-name" {
+  account_id = "oc-test-sa"
+  display_name = "oc-test-sa"
+  project = var.project_id
+}
+
+
+
+resource "google_project_iam_member" "oc-firestore_owner_binding" {
+  project = var.project_id
+  role    = "roles/datastore.owner"
+  member  = "serviceAccount:${google_service_account.sa-name.email}"
 }
 
 variable "region" {
   type        = string
   description = "The region where resources are created."
-  default = "us-central1"
+  default = "us-west2"
 }
 
 variable "cloud_scheduler_service_account_email" {
@@ -29,62 +44,67 @@ variable "batch_service_account_email" {
   default = "BATCH_SERVICE_ACCOUNT_EMAIL"
 }
 
-# define a Cloud Scheduler cron job which triggers Batch jobs
-resource "google_cloud_scheduler_job" "batch-job-invoker" {
-  paused           = false # this cron job is enabled
-  name             = "batch-job-invoker"
-  project          = var.project_id
-  region           = var.region
-  schedule         = "*/5 * * * *" # when enabled, run every 5 minutes
-  time_zone        = "America/Los_Angeles"
-  attempt_deadline = "180s"
+resource "google_cloud_run_service" "my_service" {
+  name     = "oc-appx-run-service"
+  location = var.region
+  project = var.project_id
 
-  retry_config {
-    max_doublings        = 5
-    max_retry_duration   = "0s"
-    max_backoff_duration = "3600s"
-    min_backoff_duration = "5s"
-  }
-
-  # when this cron job runs, create and run a Batch job
-  http_target {
-    http_method = "POST"
-    uri = "https://batch.googleapis.com/v1/projects/${var.project_number}/locations/${var.region}/jobs"
-    headers = {
-      "Content-Type" = "application/json"
-      "User-Agent"   = "Google-Cloud-Scheduler"
-    }
-    # Batch job definition
-    body = base64encode(<<EOT
-    {
-      "taskGroups":[
-        {
-          "taskSpec": {
-            "runnables":{
-              "script": {
-                "text": "echo Hello world! This job was created using Terraform and Cloud Scheduler."
-              }
-            }
-          }
-        }
-      ],
-      "allocationPolicy": {
-        "serviceAccount": {
-          "email": "${var.batch_service_account_email}"
-        }
-      },
-      "labels": {
-        "source": "terraform_and_cloud_scheduler_tutorial"
-      },
-      "logsPolicy": {
-        "destination": "CLOUD_LOGGING"
+  template {
+    spec {
+      containers {
+        image = "gcr.io/cloudrun/hello"
       }
     }
-    EOT
-    )
-    oauth_token {
-      scope                 = "https://www.googleapis.com/auth/cloud-platform"
-      service_account_email = var.cloud_scheduler_service_account_email
+
+  }
+
+
+  traffic {
+    percent         = 100
+    latest_revision = true
+  }
+}
+
+resource "google_service_account" "scheduler-sa" {
+  account_id   = "app-scheduler-appx"
+  project      = var.project_id
+  display_name = "appx Scheduler Service Account"
+}
+
+resource "google_project_iam_member" "schedular_invoker_binding" {
+  project = var.project_id
+  role    = "roles/run.invoker"
+  member  = "serviceAccount:${google_service_account.scheduler-sa.email}"
+}
+
+
+resource "google_cloud_scheduler_job" "http_post_job" {
+  name     = "oc-sample-http-post-job"
+  schedule = "*/5 * * * *"  # Cron schedule for running the job every 5 minutes
+  project = var.project_id
+  region  = var.region
+
+  http_target {
+    uri                  = google_cloud_run_service.my_service.status[0].url
+#    uri = "https://oc-autorobo-sf-alerts-vomsqo5wia-wl.a.run.app"
+    http_method          = "POST"
+    oidc_token {
+      service_account_email =  google_service_account.scheduler-sa.email
     }
   }
+}
+
+
+
+
+output "scheduler_service_account_email" {
+  value = google_service_account.scheduler-sa.email
+}
+
+output "service_account_email" {
+  value = google_service_account.sa-name.email
+}
+
+output "service_url" {
+  value = google_cloud_run_service.my_service.status[0].url
 }
